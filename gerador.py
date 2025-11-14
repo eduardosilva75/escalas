@@ -106,7 +106,7 @@ class DatabaseManager:
         cursor = conn.cursor()
         # Busca nome, horas e cor_hex
         cursor.execute('''
-            SELECT p.nome, p.horas_diarias, p.cor_hex
+            SELECT p.nome, p.horas_diarias, p.cor
             FROM pessoas p
             WHERE p.ativo = 1
         ''')
@@ -116,7 +116,7 @@ class DatabaseManager:
         pessoas = {}
         for nome, horas, cor_hex in pessoas_data:
             # Se cor_hex for None, usa branco
-            cor = cor_hex.replace('#', '') if cor_hex and cor_hex.startswith('#') else 'FFFFFF'
+            cor = cor_hex.replace('#', '') if cor_hex and cor_hex.startswith('#') else (cor_hex if cor_hex else 'FFFFFF')
             pessoas[nome] = {'horas': horas, 'cor': cor, 'id': None}  # id não usado aqui
         return pessoas  
        
@@ -214,7 +214,6 @@ class WorkScheduleGenerator:
         self.num_semanas = 12
         self.pessoas = self.db.get_pessoas()
         self.ferias = self.db.get_ferias()
-        #self.ciclos_folgas = self.db.get_folgas_ciclo()
         self.horarios_fixos = self.db.get_horarios_fixos()
         self.loja_fechada_dates = self.db.get_loja_fechada()
         self.dias_semana = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo']
@@ -370,11 +369,11 @@ class WorkScheduleGenerator:
         return f"{hora_sugerida:02d}:00 - {hora_saida:02d}:00"
 
     def get_eduardo_schedule(self, total_days, day, current_date, is_folga, ds):
-        # 1. Horário fixo (da BD)
+        # 1. Horário fixo (BD)
         if (current_date, 'Eduardo S.') in self.horarios_fixos:
             return self.horarios_fixos[(current_date, 'Eduardo S.')]
 
-        # 2. Folga ou férias
+        # 2. Folga/Férias
         if is_folga or self.is_ferias('Eduardo S.', current_date):
             return 'FOLGA' if is_folga else 'FÉRIAS'
 
@@ -383,25 +382,46 @@ class WorkScheduleGenerator:
             return '05:00 - 14:00'
 
         # 4. Verifica se alguém tem horário tarde (11:00 ou 12:00)
-        tem_tarde = False
-        for pessoa in ['António C.', 'Magda G.']:
-            # Horário fixo da BD
-            if (current_date, pessoa) in self.horarios_fixos:
-                horario = self.horarios_fixos[(current_date, pessoa)]
-                if isinstance(horario, str) and horario.startswith(('11:', '12:')):
-                    tem_tarde = True
-                    break
-            # Horário já atribuído no ds
-            elif isinstance(ds.get(pessoa), str) and ds[pessoa].startswith(('11:', '12:')):
-                tem_tarde = True
-                break
+        tem_tarde = any(
+            (current_date, p) in self.horarios_fixos and 
+            isinstance(self.horarios_fixos[(current_date, p)], str) and
+            self.horarios_fixos[(current_date, p)].startswith(('11:', '12:')) and
+            self.horarios_fixos[(current_date, p)] not in ['FOLGA', 'FÉRIAS']
+            or isinstance(ds.get(p), str) and ds[p].startswith(('11:', '12:')) and ds[p] not in ['FOLGA', 'FÉRIAS']
+            for p in ['António C.', 'Magda G.']
+        )
 
-        # 5. Decide horário do Eduardo
+        # 5. DEFAULT: 06:00-15:00 ou 11:00-20:00
         return '06:00 - 15:00' if tem_tarde else '11:00 - 20:00'
 
     def needs_early_coverage(self, ds):
+        """Verifica se precisa de cobertura matinal (05:00-07:00)"""
         return not any(
             isinstance(h, str) and h.startswith(('05:', '06:', '07:'))
+            for p, h in ds.items()
+            if p in self.pessoas and h not in ['FOLGA', 'FÉRIAS']
+        )
+
+    def has_coverage_until_20(self, ds):
+        """Verifica se há cobertura até às 20:00"""
+        return any(
+            isinstance(h, str) and ' - 20:00' in h
+            for p, h in ds.items()
+            if p in self.pessoas and h not in ['FOLGA', 'FÉRIAS']
+        )
+
+    def has_early_shift_05_06(self, ds):
+        """Verifica se há turno muito cedo (05:00 ou 06:00)"""
+        return any(
+            isinstance(h, str) and h.startswith(('05:', '06:'))
+            for p, h in ds.items()
+            if p in self.pessoas and h not in ['FOLGA', 'FÉRIAS']
+        )
+
+    def has_late_shift_12(self, ds):
+        """Verifica se há turno às 12:00"""
+        return any(
+            isinstance(h, str) and h.startswith('12:')
             for p, h in ds.items()
             if p in self.pessoas and h not in ['FOLGA', 'FÉRIAS']
         )
@@ -438,7 +458,7 @@ class WorkScheduleGenerator:
                     for pessoa in self.pessoas:
                         ds[pessoa] = descricao
                     self.schedule_data.append(ds)
-                    continue  # Pula o resto do dia
+                    continue
                 # =======================================
 
                 # === 2. MARCAR HORÁRIOS FIXOS PARA PROTEÇÃO ===
@@ -449,9 +469,8 @@ class WorkScheduleGenerator:
                         horarios_fixos_hoje.add(pessoa)
                 # ==============================================
 
-                # === 3. PROCESSAR PESSOAS (RESPEITANDO FIXOS) ===
+                # === 3. PRIMEIRA PASSAGEM: GERAR HORÁRIOS BASE ===
                 for pessoa in ordem_processamento:
-                    # PROTEÇÃO: SE JÁ TEM HORÁRIO FIXO → PULA
                     if pessoa in horarios_fixos_hoje:
                         continue
 
@@ -471,23 +490,88 @@ class WorkScheduleGenerator:
                         horario = 'FOLGA' if folga else ('FÉRIAS' if self.is_ferias(pessoa, current_date) else '09:00 - 18:00')
 
                     ds[pessoa] = horario
-                # ===============================================
+                # ==================================================
 
-                # === 4. AJUSTE FINAL: COBERTURA EARLY (RESPEITANDO FIXOS) ===
-                if self.needs_early_coverage(ds):
-                    for pessoa in reversed(ordem_processamento):
-                        # NÃO ALTERAR HORÁRIOS FIXOS
-                        if pessoa in horarios_fixos_hoje:
-                            continue
+                
+
+                # === 5. SEGUNDA PASSAGEM: OTIMIZAR COBERTURA ATÉ 20:00 ===
+                # Verifica se falta cobertura até 20:00
+                if not self.has_coverage_until_20(ds):
+                    # Conta quantas pessoas estão efetivamente a trabalhar (não FOLGA/FÉRIAS)
+                    pessoas_trabalhando = sum(
+                        1 for p, h in ds.items()
+                        if p in self.pessoas and isinstance(h, str) and h not in ['FOLGA', 'FÉRIAS']
+                    )
+                    
+                    # Só otimiza se houver 3+ pessoas a trabalhar
+                    # (Se houver só 2, é porque alguém está de folga/férias, não compensa estender)
+                    if pessoas_trabalhando >= 3:
+                        # Lista de candidatos para horário tarde
+                        candidatos = []
                         
+                        for pessoa in ['António C.', 'Magda G.', 'Eduardo S.']:
+                            if pessoa in horarios_fixos_hoje:
+                                continue
+                            
+                            h = ds.get(pessoa, '')
+                            if h not in ['FOLGA', 'FÉRIAS']:
+                                candidatos.append(pessoa)
+                        
+                        # Tenta ajustar o melhor candidato
+                        if candidatos:
+                            # Verifica se já tem turnos muito cedo (05:00-06:00) → 07:00 não é essencial
+                            tem_turno_muito_cedo = self.has_early_shift_05_06(ds)
+                            
+                            # Verifica se já tem turno às 12:00 → 11:00 seria redundante
+                            tem_turno_12h = self.has_late_shift_12(ds)
+                            
+                            # Prioridade: Eduardo > Magda > António
+                            for pessoa in ['Eduardo S.', 'Magda G.', 'António C.']:
+                                if pessoa not in candidatos:
+                                    continue
+                                
+                                h = ds.get(pessoa, '')
+                                
+                                # Eduardo: se não está às 05:00-14:00, pode ir para 11:00-20:00
+                                if pessoa == 'Eduardo S.' and not h.startswith('05:'):
+                                    # Só muda se não for terça (dia 1)
+                                    if day != 1 and not tem_turno_12h:
+                                        ds[pessoa] = '11:00 - 20:00'
+                                        break
+                                
+                                # Magda: pode ir para 11:00-20:00 se não tiver turno 12h
+                                elif pessoa == 'Magda G.' and not tem_turno_12h:
+                                    # Se já tem turno 05:00-06:00, Magda pode ir tarde
+                                    if tem_turno_muito_cedo:
+                                        ds[pessoa] = '11:00 - 20:00'
+                                        break
+                                
+                                # António: pode ir para 11:00-20:00 se for o turno quinzenal dele
+                                elif pessoa == 'António C.' and not tem_turno_12h:
+                                    # Verifica se é dia de semana (não sáb/dom)
+                                    if day not in [5, 6]:
+                                        turno_quinzenal = self.get_turno_antonio_quinzenal(total_days, day)
+                                        if turno_quinzenal and turno_quinzenal.startswith('11:'):
+                                            # Se já tem 05:00-06:00, António pode ir tarde
+                                            if tem_turno_muito_cedo:
+                                                ds[pessoa] = '11:00 - 20:00'
+                                                break
+                                            
+                # === 4. COBERTURA MATINAL (05:00-07:00) ===
+                if self.needs_early_coverage(ds):
+                    for pessoa in reversed(ordem_processamento):  # Eduardo é o último
+                        if pessoa in horarios_fixos_hoje:
+                            continue  # NUNCA MEXER EM FIXO
+
                         h = ds.get(pessoa, '')
                         if h not in ['FOLGA', 'FÉRIAS'] and not h.startswith(('05:', '06:', '07:')):
                             if pessoa == 'Eduardo S.':
                                 ds[pessoa] = '06:00 - 15:00'
                             else:
                                 ds[pessoa] = '07:00 - 16:00'
-                            break
-                # ==========================================================
+                            break  # Só uma pessoa precisa
+                # ============================================
+                # =========================================================
 
                 self.schedule_data.append(ds)
 
@@ -758,5 +842,3 @@ def mostrar_gerador():
 
     # Garante que a janela não seja destruída
     _janela_gerador.destroyed.connect(lambda: globals().update(_janela_gerador=None))
-
-
