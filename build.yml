@@ -1,0 +1,22 @@
+name: Build Windows Executable
+on: [push]
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Install dependencies
+      run: |
+        pip install PyQt5 pandas openpyxl pyinstaller
+    - name: Build executable
+      run: |
+        pyinstaller --onefile --add-data "escala_trabalho.db;." --name "EscalasTrabalho" --windowed main.py
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: EscalasTrabalho
+        path: dist/
