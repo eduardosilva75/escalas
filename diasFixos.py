@@ -122,7 +122,7 @@ class DiasFixosDialog(QDialog):
             SELECT h.id, p.nome, h.data, h.horario, h.descricao
             FROM horarios_fixos h
             JOIN pessoas p ON h.pessoa_id = p.id
-            ORDER BY h.data, p.nome
+            ORDER BY h.data DESC, p.nome ASC;
         """, fetch=True)
         self.tabela.setRowCount(0)
         for h in self.horarios_cache:

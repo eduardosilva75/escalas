@@ -76,13 +76,26 @@ class DatabaseManager:
             )
         ''')
 
-        # Tabela de dias de loja fechada
+        # === TABELA UNIFICADA: dias_loja_fechada ===
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS loja_fechada (
+            CREATE TABLE IF NOT EXISTS dias_loja_fechada (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                data DATE UNIQUE NOT NULL
+                data DATE UNIQUE NOT NULL,
+                descricao TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+        # === MIGRAÇÃO: de loja_fechada → dias_loja_fechada ===
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='loja_fechada'")
+        if cursor.fetchone():
+            # Copia dados
+            cursor.execute('''
+                INSERT OR IGNORE INTO dias_loja_fechada (data)
+                SELECT data FROM loja_fechada
+            ''')
+            # Apaga a tabela antiga
+            cursor.execute('DROP TABLE loja_fechada')
 
         conn.commit()
         conn.close()
@@ -169,13 +182,13 @@ class DatabaseManager:
         return horarios
 
     def get_loja_fechada(self):
-        """Obtém os dias em que a loja está fechada"""
+        """Obtém dias fechados com descrição"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        cursor.execute('SELECT data FROM loja_fechada')
-        datas_data = cursor.fetchall()
+        cursor.execute('SELECT data, descricao FROM dias_loja_fechada ORDER BY data')
+        dados = cursor.fetchall()
         conn.close()
-        return [datetime.strptime(data[0], '%Y-%m-%d') for data in datas_data]
+        return [(datetime.strptime(d[0], '%Y-%m-%d'), d[1]) for d in dados]
 
 class ScheduleWorker(QThread):
     progress = pyqtSignal(int)
@@ -196,7 +209,7 @@ class ScheduleWorker(QThread):
 
 class WorkScheduleGenerator:
     def __init__(self):
-        self.db = DatabaseManager()
+        self.db = DatabaseManager()        
         self.start_date = datetime(2025, 11, 17)  # Segunda-feira
         self.num_semanas = 12
         self.pessoas = self.db.get_pessoas()
@@ -229,7 +242,7 @@ class WorkScheduleGenerator:
         return False
 
     def is_loja_fechada(self, data):
-        return data.date() in [d.date() for d in self.loja_fechada_dates]
+        return any(d[0].date() == data.date() for d in self.loja_fechada_dates)
 
     def get_turno_antonio_quinzenal(self, total_days, day):
         if total_days <= 3:
@@ -244,7 +257,7 @@ class WorkScheduleGenerator:
         if is_folga or self.is_ferias('Susana A.', current_date):
             return 'FOLGA' if is_folga else 'FÉRIAS'
         if 0 <= day <= 4:
-            return '09:00 - 16:00'
+            return '09:00 - 18:00'
         else:
             return 'FOLGA'
 
@@ -357,27 +370,34 @@ class WorkScheduleGenerator:
         return f"{hora_sugerida:02d}:00 - {hora_saida:02d}:00"
 
     def get_eduardo_schedule(self, total_days, day, current_date, is_folga, ds):
+        # 1. Horário fixo (da BD)
         if (current_date, 'Eduardo S.') in self.horarios_fixos:
             return self.horarios_fixos[(current_date, 'Eduardo S.')]
 
+        # 2. Folga ou férias
         if is_folga or self.is_ferias('Eduardo S.', current_date):
             return 'FOLGA' if is_folga else 'FÉRIAS'
 
+        # 3. Terça-feira (dia 1)
         if day == 1:
             return '05:00 - 14:00'
 
-        # Filtra apenas horários válidos (strings)
-        outros_horarios = [
-            h for p, h in ds.items()
-            if p != 'Eduardo S.' and isinstance(h, str) and h not in ['FOLGA', 'FÉRIAS']
-        ]
+        # 4. Verifica se alguém tem horário tarde (11:00 ou 12:00)
+        tem_tarde = False
+        for pessoa in ['António C.', 'Magda G.']:
+            # Horário fixo da BD
+            if (current_date, pessoa) in self.horarios_fixos:
+                horario = self.horarios_fixos[(current_date, pessoa)]
+                if isinstance(horario, str) and horario.startswith(('11:', '12:')):
+                    tem_tarde = True
+                    break
+            # Horário já atribuído no ds
+            elif isinstance(ds.get(pessoa), str) and ds[pessoa].startswith(('11:', '12:')):
+                tem_tarde = True
+                break
 
-        has_late = any(h.startswith(('11:', '12:')) for h in outros_horarios)
-
-        if has_late:
-            return '06:00 - 15:00'
-        else:
-            return '11:00 - 20:00'
+        # 5. Decide horário do Eduardo
+        return '06:00 - 15:00' if tem_tarde else '11:00 - 20:00'
 
     def needs_early_coverage(self, ds):
         return not any(
@@ -389,37 +409,54 @@ class WorkScheduleGenerator:
     def generate_schedule(self):
         self.schedule_data = []
         ordem_processamento = ['Susana A.', 'Antónia F.', 'António C.', 'Magda G.', 'Eduardo S.']
-        # ← RECARREGA TUDO DA BASE DE DADOS
+
+        # RECARREGA TUDO DA BASE DE DADOS
         self.pessoas = self.db.get_pessoas()
         self.ferias = self.db.get_ferias()
-        self.ciclos_folgas = self.db.get_folgas_ciclo()  # ← AQUI!
+        self.ciclos_folgas = self.db.get_folgas_ciclo()
         self.horarios_fixos = self.db.get_horarios_fixos()
         self.loja_fechada_dates = self.db.get_loja_fechada()
-    # ...
+
         for week in range(self.num_semanas):
             for day in range(7):
                 total_days = (week * 7) + day
                 current_date = self.start_date + timedelta(days=total_days)
+
                 ds = {
                     'Semana': week + 1,
                     'Data': current_date.strftime('%d/%m/%Y'),
                     'Dia': self.dias_semana[day],
                     'Data_obj': current_date
                 }
+
+                # === 1. LOJA FECHADA (com descrição) ===
                 if self.is_loja_fechada(current_date):
+                    descricao = next(
+                        (d[1] for d in self.loja_fechada_dates if d[0].date() == current_date.date()),
+                        "Loja Fechada"
+                    )
                     for pessoa in self.pessoas:
-                        ds[pessoa] = 'Loja Fechada'
+                        ds[pessoa] = descricao
                     self.schedule_data.append(ds)
-                    continue
-                # Aplicar horários fixos primeiro
+                    continue  # Pula o resto do dia
+                # =======================================
+
+                # === 2. MARCAR HORÁRIOS FIXOS PARA PROTEÇÃO ===
+                horarios_fixos_hoje = set()
                 for pessoa in self.pessoas:
                     if (current_date, pessoa) in self.horarios_fixos:
                         ds[pessoa] = self.horarios_fixos[(current_date, pessoa)]
-                # Processar cada pessoa
+                        horarios_fixos_hoje.add(pessoa)
+                # ==============================================
+
+                # === 3. PROCESSAR PESSOAS (RESPEITANDO FIXOS) ===
                 for pessoa in ordem_processamento:
-                    if pessoa in ds:  # Já tem horário fixo
+                    # PROTEÇÃO: SE JÁ TEM HORÁRIO FIXO → PULA
+                    if pessoa in horarios_fixos_hoje:
                         continue
+
                     folga = self.is_folga(pessoa, current_date)
+
                     if pessoa == 'Susana A.':
                         horario = self.get_susana_schedule(total_days, day, current_date, folga)
                     elif pessoa == 'Antónia F.':
@@ -431,22 +468,27 @@ class WorkScheduleGenerator:
                     elif pessoa == 'Eduardo S.':
                         horario = self.get_eduardo_schedule(total_days, day, current_date, folga, ds)
                     else:
-                        if folga:
-                            horario = 'FOLGA'
-                        elif self.is_ferias(pessoa, current_date):
-                            horario = 'FÉRIAS'
-                        else:
-                            horario = '09:00 - 18:00'
+                        horario = 'FOLGA' if folga else ('FÉRIAS' if self.is_ferias(pessoa, current_date) else '09:00 - 18:00')
+
                     ds[pessoa] = horario
-                # Ajuste final para cobertura early se necessário
+                # ===============================================
+
+                # === 4. AJUSTE FINAL: COBERTURA EARLY (RESPEITANDO FIXOS) ===
                 if self.needs_early_coverage(ds):
-                    for pessoa in reversed(ordem_processamento):  # Priorizar Eduardo, etc.
-                        if ds.get(pessoa) not in ['FOLGA', 'FÉRIAS'] and not ds.get(pessoa, '').startswith(('05:', '06:', '07:')):
+                    for pessoa in reversed(ordem_processamento):
+                        # NÃO ALTERAR HORÁRIOS FIXOS
+                        if pessoa in horarios_fixos_hoje:
+                            continue
+                        
+                        h = ds.get(pessoa, '')
+                        if h not in ['FOLGA', 'FÉRIAS'] and not h.startswith(('05:', '06:', '07:')):
                             if pessoa == 'Eduardo S.':
                                 ds[pessoa] = '06:00 - 15:00'
                             else:
                                 ds[pessoa] = '07:00 - 16:00'
                             break
+                # ==========================================================
+
                 self.schedule_data.append(ds)
 
     def create_dataframe(self):
