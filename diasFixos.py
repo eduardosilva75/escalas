@@ -43,7 +43,7 @@ class DiasFixosDialog(QDialog):
         # Data
         self.date_edit = QDateEdit()
         self.date_edit.setCalendarPopup(True)
-        self.date_edit.setDate(QDate(2025, 9, 29))
+        self.date_edit.setDate(QDate.currentDate())
         form_layout.addRow("Data:", self.date_edit)
 
         # Horário

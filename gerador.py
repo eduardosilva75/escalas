@@ -275,22 +275,41 @@ class WorkScheduleGenerator:
         if is_folga or self.is_ferias('António C.', current_date):
             return 'FOLGA' if is_folga else 'FÉRIAS'
 
-        # Filtra apenas horários válidos (strings)
+        # Filtra horários válidos de trabalho dos outros
         outros_horarios = [
             h for p, h in ds.items()
-            if p != 'António C.' and isinstance(h, str) and h not in ['FOLGA', 'FÉRIAS']
+            if p != 'António C.' and isinstance(h, str) and h not in ['FOLGA', 'FÉRIAS', 'Loja Fechada']
         ]
 
-        has_early = any(h.startswith(('05:', '06:', '07:')) for h in outros_horarios)
-        has_late = any(h.startswith(('11:', '12:')) for h in outros_horarios)
+        has_early = any(h.startswith(('05:', '06:', '07:', '08:')) for h in outros_horarios)  # 08: conta como cedo no fds
+        has_late  = any(' - 20:00' in h for h in outros_horarios)
 
+        # ===================================================================
+        # FIM-DE-SEMANA (Sábado = 5, Domingo = 6)
+        # ===================================================================
         if day in [5, 6]:
+            # Prioridade máxima: garantir fecho às 20:00
+            if not has_late:
+                return '11:00 - 20:00'
+            # Só depois, se já houver quem feche, verifica se precisa abrir cedo
             if not has_early:
                 return '08:00 - 17:00'
-            elif not has_late:
-                return '11:00 - 20:00'
-            else:
-                return '09:00 - 18:00'
+            # Se já houver abertura cedo e fecho tarde → horário normal
+            return '09:00 - 18:00'
+
+        # ===================================================================
+        # DIAS DE SEMANA (o teu código antigo pode ficar quase igual)
+        # ===================================================================
+        # (o resto do código que já tinhas para dias de semana)
+        turno_quinzenal = self.get_turno_antonio_quinzenal(total_days, day)
+
+        # Se no turno quinzenal dele for suposto fazer tarde, mas já há alguém tarde → faz normal
+        if turno_quinzenal.startswith('11:') and has_late:
+            turno_quinzenal = '09:00 - 18:00'
+
+        # (o teu código de ajuste com o dia anterior pode ficar exatamente como está)
+
+        return turno_quinzenal
 
         turno_quinzenal = self.get_turno_antonio_quinzenal(total_days, day)
         if turno_quinzenal.startswith('11:') and has_late:
