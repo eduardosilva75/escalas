@@ -256,7 +256,7 @@ class WorkScheduleGenerator:
         if is_folga or self.is_ferias('Susana A.', current_date):
             return 'FOLGA' if is_folga else 'FÉRIAS'
         if 0 <= day <= 4:
-            return '09:00 - 18:00'
+            return '05:00 - 14:00'
         else:
             return 'FOLGA'
 
