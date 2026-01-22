@@ -106,28 +106,27 @@ class MainWindow(QMainWindow):
         btn_ferias.clicked.connect(self.abrir_ferias)
         buttons_layout.addWidget(btn_ferias)
         
-        # Botão Gestão de Horários
-        btn_horarios = QPushButton("⏰ Gestão de Horários")
-        btn_horarios.setFont(QFont("Arial", 14))
-        btn_horarios.setMinimumHeight(80)
-        btn_horarios.setEnabled(False)  # DESATIVADO
-        btn_horarios.setStyleSheet("""
+        # Botão Mapa de Férias
+        btn_ferias = QPushButton("🏖️ Mapa de Férias")
+        btn_ferias.setFont(QFont("Arial", 14))
+        btn_ferias.setMinimumHeight(80)
+        btn_ferias.setStyleSheet("""
             QPushButton {
-                background-color: #9C27B0;
+                background-color:  #9C27B0;
                 color: white;
                 border: none;
                 border-radius: 10px;
                 padding: 10px;
             }
             QPushButton:hover {
-                background-color: #7B1FA2;
+                background-color: #F57C00;
             }
             QPushButton:pressed {
-                background-color: #6A1B9A;
+                background-color: #EF6C00;
             }
         """)
-        btn_horarios.clicked.connect(self.abrir_horarios)
-        buttons_layout.addWidget(btn_horarios)
+        btn_ferias.clicked.connect(self.abrir_mapa_ferias)
+        buttons_layout.addWidget(btn_ferias)
         
         # Botão Dias Fixos
         btn_dias_fixos = QPushButton("📋 Dias Fixos")
@@ -227,7 +226,7 @@ class MainWindow(QMainWindow):
             mostrar_gerador()
         except Exception as e:
             print(f"Erro ao abrir Gerador: {e}")
-    
+
     def abrir_folgas(self):
         """Abre a gestão de folgas"""
         try:
@@ -235,7 +234,7 @@ class MainWindow(QMainWindow):
             mostrar_folgas()
         except Exception as e:
             print(f"Erro ao abrir Gestão de Folgas: {e}")
-    
+
     def abrir_ferias(self):
         """Abre a gestão de férias"""
         try:
@@ -243,15 +242,18 @@ class MainWindow(QMainWindow):
             mostrar_ferias()
         except Exception as e:
             print(f"Erro ao abrir Gestão de Férias: {e}")
-    
-    def abrir_horarios(self):
-        """Abre a gestão de horários"""
+
+    def abrir_mapa_ferias(self):
+        """Abre o mapa de férias"""
         try:
-            from horarios import mostrar_horarios
-            mostrar_horarios()
+            from mapaFerias import mostrar_mapa_ferias
+            mostrar_mapa_ferias()
         except Exception as e:
-            print(f"Erro ao abrir Gestão de Horários: {e}")
-    
+            print(f"Erro ao abrir Mapa de Férias: {e}")
+            # Fallback simples
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Erro", f"Não foi possível abrir o Mapa de Férias:\n{e}")
+
     def abrir_dias_fixos(self):
         """Abre a gestão de dias fixos"""
         try:
@@ -259,7 +261,7 @@ class MainWindow(QMainWindow):
             mostrar_dias_fixos()
         except Exception as e:
             print(f"Erro ao abrir Dias Fixos: {e}")
-    
+
     def abrir_configuracoes(self):
         """Abre as configurações"""
         try:
@@ -267,7 +269,7 @@ class MainWindow(QMainWindow):
             mostrar_configuracoes()
         except Exception as e:
             print(f"Erro ao abrir Configurações: {e}")
-    
+
     def fechar_aplicacao(self):
         """Fecha a aplicação completamente"""
         self.close()
