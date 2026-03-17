@@ -210,7 +210,7 @@ class ScheduleWorker(QThread):
 class WorkScheduleGenerator:
     def __init__(self):
         self.db = DatabaseManager()        
-        self.start_date = datetime(2025, 11, 17)  # Segunda-feira
+        self.start_date = datetime(2026, 3, 16)  # Segunda-feira
         self.num_semanas = 12
         self.pessoas = self.db.get_pessoas()
         self.ferias = self.db.get_ferias()
@@ -728,7 +728,7 @@ class MainWindow(QMainWindow):
         date_label = QLabel("Data de Início:")
         date_label.setStyleSheet("font-weight: bold;")
         self.date_edit = QDateEdit()
-        self.date_edit.setDate(QDate(2025, 11, 17))
+        self.date_edit.setDate(QDate(2026, 3, 16))
         self.date_edit.setCalendarPopup(True)
         self.date_edit.setStyleSheet("padding: 5px;")
         semanas_label = QLabel("Semanas:")
