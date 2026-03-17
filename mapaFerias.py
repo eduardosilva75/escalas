@@ -232,6 +232,23 @@ class MapaFeriasWindow(QMainWindow):
                 background-color: #7B1FA2;
             }
         """)
+
+        # No buttons_layout, antes do btn_fechar, adicione:
+        btn_excel = QPushButton("📊 Exportar Excel Completo")
+        btn_excel.setFont(QFont("Arial", 10))
+        btn_excel.clicked.connect(self.exportar_excel_completo)
+        btn_excel.setStyleSheet("""
+            QPushButton {
+                background-color: #27AE60;
+                color: white;
+                padding: 8px 15px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #229954;
+            }
+        """)
+        buttons_layout.addWidget(btn_excel)
         
         # No método init_ui(), alterar a conexão do botão Fechar:
         btn_fechar = QPushButton("✖️ Fechar")
@@ -503,6 +520,266 @@ class MapaFeriasWindow(QMainWindow):
                 
         except Exception as e:
             QMessageBox.critical(self, "Erro", f"Erro ao exportar:\n{str(e)}")
+
+
+    def exportar_excel_completo(self):
+        """Exporta o mapa de férias completo para Excel com todos os colaboradores"""
+        try:
+            from PyQt5.QtWidgets import QFileDialog
+            from openpyxl import Workbook
+            from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+            from openpyxl.styles import numbers
+            
+            filename, _ = QFileDialog.getSaveFileName(
+                self,
+                "Exportar Mapa de Férias para Excel",
+                f"mapa_ferias_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                "Excel Files (*.xlsx)"
+            )
+            
+            if not filename:
+                return
+            
+            if not filename.endswith('.xlsx'):
+                filename += '.xlsx'
+            
+            # Obter dados completos (sem filtros)
+            ferias = self.db.get_ferias()
+            pessoas = self.db.get_pessoas()
+            
+            # Criar workbook
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Mapa de Férias"
+            
+            # Cabeçalhos
+            headers = ['Pessoa', 'Início', 'Fim', 'Dias', 'Período']
+            ws.append(headers)
+            
+            # Formatar cabeçalhos
+            header_fill = PatternFill(start_color='FF9800', end_color='FF9800', fill_type='solid')
+            header_font = Font(color='FFFFFF', bold=True)
+            
+            for cell in ws[1]:
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal='center')
+            
+            # Cores para cada pessoa
+            cores = {
+                'Susana A.': 'E8F5E8',
+                'António C.': 'FFF3CD',
+                'Antónia F.': 'D4EDDA',
+                'Magda G.': 'CCE5FF',
+                'Eduardo S.': 'F0E6FF'
+            }
+            
+            # Adicionar dados
+            for pessoa in pessoas:
+                if pessoa in ferias:
+                    for inicio, fim in ferias[pessoa]:
+                        dias = (fim - inicio).days + 1
+                        periodo = f"{inicio.strftime('%d/%m')} a {fim.strftime('%d/%m')}"
+                        
+                        row_data = [
+                            pessoa,
+                            inicio,  # Passar objeto date em vez de string
+                            fim,     # Passar objeto date em vez de string
+                            dias,
+                            periodo
+                        ]
+                        ws.append(row_data)
+            
+            # Formatar células
+            thin = Border(
+                left=Side(style='thin'),
+                right=Side(style='thin'),
+                top=Side(style='thin'),
+                bottom=Side(style='thin')
+            )
+            
+            for row in range(2, ws.max_row + 1):
+                pessoa = ws[f'A{row}'].value
+                
+                # Formatar coluna B (Início) como data
+                cell_b = ws[f'B{row}']
+                cell_b.number_format = 'DD-MM-YYYY'  # Formato para LibreOffice/Excel
+                cell_b.border = thin
+                cell_b.alignment = Alignment(horizontal='center')
+                
+                # Formatar coluna C (Fim) como data
+                cell_c = ws[f'C{row}']
+                cell_c.number_format = 'DD-MM-YYYY'  # Formato para LibreOffice/Excel
+                cell_c.border = thin
+                cell_c.alignment = Alignment(horizontal='center')
+                
+                # Formatar outras colunas
+                for col in [1, 4, 5]:
+                    cell = ws.cell(row=row, column=col)
+                    cell.border = thin
+                    cell.alignment = Alignment(horizontal='center')
+                    
+                    # Aplicar cor por pessoa na coluna A
+                    if col == 1 and pessoa in cores:
+                        cell.fill = PatternFill(start_color=cores[pessoa], end_color=cores[pessoa], fill_type='solid')
+                    
+                    # Negrito para dias
+                    if col == 4:
+                        cell.font = Font(bold=True)
+            
+            # Ajustar largura das colunas
+            ws.column_dimensions['A'].width = 18  # Pessoa
+            ws.column_dimensions['B'].width = 12  # Início
+            ws.column_dimensions['C'].width = 12  # Fim
+            ws.column_dimensions['D'].width = 8   # Dias
+            ws.column_dimensions['E'].width = 20  # Período
+            
+            # === SEGUNDA ABA: VISÃO POR PESSOA (lado a lado) ===
+            ws2 = wb.create_sheet("Visão por Pessoa")
+            
+            # Cabeçalhos
+            headers2 = ['Período'] + pessoas
+            ws2.append(headers2)
+            
+            # Formatar cabeçalhos
+            for cell in ws2[1]:
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal='center')
+            
+            # Coletar todos os períodos únicos com data de início para ordenação
+            todos_periodos = []
+            periodos_por_pessoa = {}
+            
+            for pessoa in pessoas:
+                periodos_por_pessoa[pessoa] = []
+                if pessoa in ferias:
+                    for inicio, fim in ferias[pessoa]:
+                        dias = (fim - inicio).days + 1
+                        periodo = f"{inicio.strftime('%d/%m')} a {fim.strftime('%d/%m')}"
+                        periodos_por_pessoa[pessoa].append({
+                            'periodo': periodo,
+                            'dias': dias,
+                            'data_inicio': inicio
+                        })
+                        # Guardar com data para ordenação
+                        todos_periodos.append({
+                            'periodo': periodo,
+                            'data_inicio': inicio
+                        })
+            
+            # Remover duplicados e ordenar por data
+            periodos_unicos = []
+            periodos_set = set()
+            for p in sorted(todos_periodos, key=lambda x: x['data_inicio']):
+                if p['periodo'] not in periodos_set:
+                    periodos_unicos.append(p['periodo'])
+                    periodos_set.add(p['periodo'])
+            
+            # Preencher dados
+            for periodo in periodos_unicos:
+                row_data = [periodo]
+                for pessoa in pessoas:
+                    encontrado = False
+                    for p in periodos_por_pessoa[pessoa]:
+                        if p['periodo'] == periodo:
+                            row_data.append(f"✓ ({p['dias']}d)")
+                            encontrado = True
+                            break
+                    if not encontrado:
+                        row_data.append("-")
+                ws2.append(row_data)
+            
+            # Formatar segunda aba
+            for row in range(2, ws2.max_row + 1):
+                for col in range(1, len(pessoas) + 2):
+                    cell = ws2.cell(row=row, column=col)
+                    cell.border = thin
+                    cell.alignment = Alignment(horizontal='center')
+                    
+                    # Aplicar cores por pessoa
+                    if col > 1:
+                        pessoa = pessoas[col-2]
+                        if cell.value != "-" and pessoa in cores:
+                            cell.fill = PatternFill(start_color=cores[pessoa], end_color=cores[pessoa], fill_type='solid')
+                            cell.font = Font(bold=True)
+            
+            # Ajustar larguras
+            ws2.column_dimensions['A'].width = 20
+            for i, pessoa in enumerate(pessoas, 2):
+                ws2.column_dimensions[chr(64 + i)].width = 15
+            
+            # === TERCEIRA ABA: RESUMO ===
+            ws3 = wb.create_sheet("Resumo")
+            
+            ws3.append(['RESUMO DE FÉRIAS'])
+            ws3.append([])
+            ws3.append(['Pessoa', 'Total de Dias', 'Nº de Períodos', 'Média por Período'])
+            
+            total_geral_dias = 0
+            total_geral_periodos = 0
+            
+            for pessoa in pessoas:
+                if pessoa in ferias:
+                    total_dias = 0
+                    num_periodos = len(ferias[pessoa])
+                    for inicio, fim in ferias[pessoa]:
+                        total_dias += (fim - inicio).days + 1
+                    
+                    media = total_dias / num_periodos if num_periodos > 0 else 0
+                    
+                    ws3.append([pessoa, total_dias, num_periodos, f"{media:.1f}"])
+                    
+                    total_geral_dias += total_dias
+                    total_geral_periodos += num_periodos
+                else:
+                    ws3.append([pessoa, 0, 0, "0"])
+            
+            ws3.append([])
+            ws3.append(['TOTAL GERAL', total_geral_dias, total_geral_periodos, f"{total_geral_dias/total_geral_periodos:.1f}" if total_geral_periodos > 0 else "0"])
+            
+            # Formatar resumo
+            for row in range(1, ws3.max_row + 1):
+                for col in range(1, 5):
+                    cell = ws3.cell(row=row, column=col)
+                    cell.border = thin
+                    cell.alignment = Alignment(horizontal='center')
+            
+            # Título em negrito
+            ws3['A1'].font = Font(bold=True, size=14)
+            ws3.merge_cells('A1:D1')
+            
+            # Formatar totais
+            last_row = ws3.max_row
+            for col in range(1, 5):
+                cell = ws3.cell(row=last_row, column=col)
+                cell.font = Font(bold=True)
+                cell.fill = PatternFill(start_color='E0E0E0', end_color='E0E0E0', fill_type='solid')
+            
+            ws3.column_dimensions['A'].width = 18
+            ws3.column_dimensions['B'].width = 12
+            ws3.column_dimensions['C'].width = 15
+            ws3.column_dimensions['D'].width = 15
+            
+            # Salvar
+            wb.save(filename)
+            
+            QMessageBox.information(
+                self, 
+                "Sucesso", 
+                f"Mapa de férias exportado com sucesso!\n\n"
+                f"Arquivo: {filename}\n\n"
+                f"O ficheiro contém 3 abas:\n"
+                f"• Mapa de Férias - Lista detalhada\n"
+                f"• Visão por Pessoa - Períodos lado a lado\n"
+                f"• Resumo - Estatísticas por pessoa\n\n"
+                f"Nota: As datas estão formatadas como DD-MM-YYYY"
+            )
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", f"Erro ao exportar Excel:\n{str(e)}")
+            import traceback
+            traceback.print_exc()
 
 # Variável global para manter a janela
 _janela_mapa_ferias = None
