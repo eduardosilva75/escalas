@@ -159,7 +159,7 @@ class PhoneScheduleGenerator:
 
     def get_available_people_at_hour(self, day_schedule, hour):
         """
-        Retorna lista de pessoas disponíveis em determinada hora
+        Retorna lista de pessoas disponíveis em determinada hora, excluindo aquelas que estão em intervalo.
         """
         available = []
 
@@ -169,6 +169,11 @@ class PhoneScheduleGenerator:
                 if time_range:
                     hora_inicio, hora_fim = time_range
                     if hora_inicio <= hour < hora_fim:
+                        # Verifica se a pessoa está em intervalo
+                        break_hour = self.get_break_hour(hora_inicio)
+                        if break_hour == hour:
+                            # A pessoa está de intervalo nesta hora
+                            continue
                         available.append(self.abreviacoes[pessoa])
 
         return available
@@ -502,6 +507,8 @@ class PhoneScheduleGenerator:
         ws.append(['Horário de atendimento: 08:00 - 22:00'])
         ws.append(['Gerado em: ' + datetime.now().strftime('%d/%m/%Y %H:%M:%S')])
 
+        ws.append(['- Intervalo obrigatório após 3 horas de trabalho consecutivo'])
+
         # Formatar título
         ws['A1'].font = Font(bold=True, size=14)
 
@@ -541,6 +548,14 @@ class PhoneScheduleGenerator:
 
         print("-" * 40)
         print(f"{'TOTAL':<15}: {sum(totals.values()):3d} horas")
+
+    def get_break_hour(self, start_hour):
+        """
+        Calcula a hora do intervalo após 3 horas de trabalho.
+        Retorna a hora (int) em que a pessoa deve fazer pausa.
+        Exemplo: start=5 -> break=8 (5+3)
+        """
+        return start_hour + 3
 
 
 class GeradorWorker(QThread):
@@ -662,6 +677,7 @@ class GeradorApoiosWindow(QMainWindow):
             "• Gera escala telefónica baseada na escala de trabalho\n"
             "• Horário de atendimento: 08:00 - 22:00\n"
             "• Máximo de 3 horas consecutivas por pessoa\n"
+            "• Intervalo obrigatório após 3 horas de trabalho consecutivo\n"
             "• Distribuição equilibrada entre colaboradores\n"
             "• Respeita folgas, férias e horários de almoço\n\n"
             "📁 Necessário: arquivo 'escala_trabalho.xlsx' na mesma pasta"

@@ -347,24 +347,8 @@ class WorkScheduleGenerator:
         if is_folga or self.is_ferias('Magda G.', current_date):
             return 'FOLGA' if is_folga else 'FÉRIAS'
 
-        # 3. VERIFICA SE A ANTÓNIA ESTÁ A TRABALHAR
-        # Primeiro verifica se a Antónia tem horário fixo
-        if (current_date, 'Antónia F.') in self.horarios_fixos:
-            horario_antonia = self.horarios_fixos[(current_date, 'Antónia F.')]
-            antonia_a_trabalhar = (horario_antonia not in ['FOLGA', 'FÉRIAS'])
-        else:
-            # Verifica se a Antónia está de folga ou férias
-            antonia_de_folga = self.is_folga('Antónia F.', current_date) or self.is_ferias('Antónia F.', current_date)
-            antonia_a_trabalhar = not antonia_de_folga
-
-        # 4. REGRA PRINCIPAL:
-        # - Se Antónia ESTÁ A TRABALHAR → Magda faz 13:00-22:00
-        # - Se Antónia ESTÁ DE FOLGA → Magda faz 11:00-20:00
-        if antonia_a_trabalhar:
-            return '13:00 - 22:00'
-        else:
-            # Antónia está de folga → Magda faz 11:00-20:00
-            return '11:00 - 20:00'
+        # 3. Horário padrão
+        return '13:00 - 22:00'
 
     def get_eduardo_schedule(self, total_days, day, current_date, is_folga, ds):
         # 1. Horário fixo (BD)
